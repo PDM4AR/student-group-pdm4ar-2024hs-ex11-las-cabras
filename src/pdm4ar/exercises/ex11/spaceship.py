@@ -41,22 +41,22 @@ class SpaceshipDyn:
         f = spy.zeros(self.n_x, 1)
 
         # Position
-        f[0, 0] = self.x[3, 0] * spy.cos(self.x[2, 0]) - self.x[4, 0] * spy.sin(self.x[2, 0])
-        f[1, 0] = self.x[3, 0] * spy.sin(self.x[2, 0]) + self.x[4, 0] * spy.cos(self.x[2, 0])
+        f[0, 0] = (self.x[3, 0] * spy.cos(self.x[2, 0]) - self.x[4, 0] * spy.sin(self.x[2, 0])) * self.p
+        f[1, 0] = (self.x[3, 0] * spy.sin(self.x[2, 0]) + self.x[4, 0] * spy.cos(self.x[2, 0])) * self.p
 
         # Heading
-        f[2, 0] = self.x[5, 0]
+        f[2, 0] = self.x[5, 0] * self.p
 
         # Velocity
-        f[3, 0] = 1 / self.x[7, 0] * spy.cos(self.x[6, 0]) * self.u[0, 0] + self.x[4, 0] * self.x[5, 0]
-        f[4, 0] = 1 / self.x[7, 0] * spy.sin(self.x[6, 0]) * self.u[0, 0] - self.x[3, 0] * self.x[5, 0]
+        f[3, 0] = (1 / self.x[7, 0] * spy.cos(self.x[6, 0]) * self.u[0, 0] + self.x[4, 0] * self.x[5, 0]) * self.p
+        f[4, 0] = (1 / self.x[7, 0] * spy.sin(self.x[6, 0]) * self.u[0, 0] - self.x[3, 0] * self.x[5, 0]) * self.p
 
         # Angular velocity
-        f[5, 0] = -self.sg.l_r / self.sg.Iz * spy.sin(self.x[6, 0]) * self.u[0, 0]
-        f[6, 0] = self.u[1, 0]
+        f[5, 0] = -self.sg.l_r / self.sg.Iz * spy.sin(self.x[6, 0]) * self.u[0, 0] * self.p
+        f[6, 0] = self.u[1, 0] * self.p
 
         # Fuel
-        f[7, 0] = -self.sp.C_T * self.u[0, 0]
+        f[7, 0] = -self.sp.C_T * self.u[0, 0] * self.p
 
         # Convert to functions with safe evaluation
         f_func = spy.lambdify((self.x, self.u, self.p), f, "numpy")

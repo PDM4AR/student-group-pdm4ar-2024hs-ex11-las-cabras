@@ -102,10 +102,8 @@ class SpaceshipPlanner:
         # Problem Parameters
         self.problem_parameters = self._get_problem_parameters()
 
-        # Initialize with zeros (will be updated in compute_trajectory)
-        self.X_bar = np.zeros((self.spaceship.n_x, self.params.K))
-        self.U_bar = np.zeros((self.spaceship.n_u, self.params.K))
-        self.p_bar = np.zeros(self.spaceship.n_p)
+        # Initialize with zeros
+        self.X_bar, self.U_bar, self.p_bar = self.initial_guess()
 
         # Constraints
         constraints = self._get_constraints()
@@ -132,7 +130,7 @@ class SpaceshipPlanner:
         K = self.params.K
         X = np.zeros((self.spaceship.n_x, K))
         U = np.zeros((self.spaceship.n_u, K))
-        p = np.array([10.0])  # Initial time guess
+        p = np.array([15.0])  # Initial time guess
         return X, U, p
 
     def _set_goal(self):
@@ -159,8 +157,9 @@ class SpaceshipPlanner:
         Define problem parameters for SCvx.
         """
         problem_parameters = {
-            "init_state": cvx.Parameter(self.spaceship.n_x)
-            # ...
+            "init_state": cvx.Parameter(self.spaceship.n_x),
+            "goal_state": cvx.Parameter(self.spaceship.n_x),
+            "A_bar": cvx.Parameter((self.spaceship.n_x * self.spaceship.n_x, self.params.K - 1)),
         }
 
         return problem_parameters
@@ -172,23 +171,32 @@ class SpaceshipPlanner:
         p = self.variables["p"]  # time parameter
         K = self.params.K
 
+        # Initial and Final constraints
         constraints = [
             # Initial state
             X[:, 0] == self.problem_parameters["init_state"],
             # Input constraints
-            U[0, :] >= self.sp.thrust_limits[0],  # min thrust
-            U[0, :] <= self.sp.thrust_limits[1],  # max thrust
-            U[1, :] >= self.sp.delta_limits[0],  # min steering
-            U[1, :] <= self.sp.delta_limits[1],  # max steering
             U[:, 0] == 0,  # zero initial input
             U[:, -1] == 0,  # zero final input
             # State constraints
             X[7, :] >= self.sp.m_v,  # mass above vehicle mass
-            # Time constraint
-            p >= 0,
-            p <= 60,
-            # Steering rate
-            cvx.abs(U[1, 1:] - U[1, :-1]) <= self.sp.ddelta_limits[1] * p / (K - 1),
+            X[6, :] >= self.sp.delta_limits[0],
+            X[6, :] <= self.sp.delta_limits[1],
+        ]
+
+        # State constrains
+        constraints += [
+            X[7, :] >= self.sp.m_v,  # mass above vehicle mass
+            X[6, :] >= self.sp.delta_limits[0],
+            X[6, :] <= self.sp.delta_limits[1],
+        ]
+
+        # Input constraints
+        constraints += [
+            U[0, :] >= self.sp.thrust_limits[0],  # min thrust
+            U[0, :] <= self.sp.thrust_limits[1],  # max thrust
+            U[1, :] >= self.sp.ddelta_limits[0],  # min steering
+            U[1, :] <= self.sp.ddelta_limits[1],  # max steering
         ]
 
         # Obstacles - Planets
@@ -201,24 +209,24 @@ class SpaceshipPlanner:
                 diff = X[:2, k] - center
                 constraints.append(cvx.sum_squares(diff) >= radius * radius)
 
-        # Obstacles - Satellites
-        for sat in self.satellites.values():
-            radius = sat.radius + self.sg.l
-            for k in range(K):
-                t = k * p / (K - 1)
+        # # Obstacles - Satellites
+        # for sat in self.satellites.values():
+        #     radius = sat.radius + self.sg.l
+        #     for k in range(K):
+        #         t = k * p / (K - 1)
 
-                # Linear approximation of satellite position
-                angle = sat.tau + sat.omega * t
-                ca = np.cos(sat.tau)  # Fixed angle component
-                sa = np.sin(sat.tau)
+        #         # Linear approximation of satellite position
+        #         angle = sat.tau + sat.omega * t
+        #         ca = np.cos(sat.tau)  # Fixed angle component
+        #         sa = np.sin(sat.tau)
 
-                x_sat = sat.orbit_r * (ca - t * sat.omega * sa)
-                y_sat = sat.orbit_r * (sa + t * sat.omega * ca)
-                sat_pos = np.array([x_sat, y_sat])
+        #         x_sat = sat.orbit_r * (ca - t * sat.omega * sa)
+        #         y_sat = sat.orbit_r * (sa + t * sat.omega * ca)
+        #         sat_pos = np.array([x_sat, y_sat])
 
-                # Squared distance constraint
-                diff = X[:2, k] - sat_pos
-                constraints.append(cvx.sum_squares(diff) >= radius * radius)
+        #         # Squared distance constraint
+        #         diff = X[:2, k] - sat_pos
+        #         constraints.append(cvx.sum_squares(diff) >= radius * radius)
 
         return constraints
 
