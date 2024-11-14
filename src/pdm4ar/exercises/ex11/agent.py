@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Sequence
+import numpy as np
 
 from dg_commons import DgSampledSequence, PlayerName
 from dg_commons.sim import SimObservations, InitSimObservations
@@ -20,6 +21,7 @@ class MyAgentParams:
     """
     You can for example define some agent parameters.
     """
+
     my_tol: float = 0.1
 
 
@@ -45,10 +47,10 @@ class SpaceshipAgent(Agent):
     sp: SpaceshipParameters
 
     def __init__(
-            self,
-            init_state: SpaceshipState,
-            satellites: dict[PlayerName, SatelliteParams],
-            planets: dict[PlayerName, PlanetParams],
+        self,
+        init_state: SpaceshipState,
+        satellites: dict[PlayerName, SatelliteParams],
+        planets: dict[PlayerName, PlanetParams],
     ):
         """
         Initializes the agent.
@@ -93,13 +95,4 @@ class SpaceshipAgent(Agent):
         current_state = sim_obs.players[self.myname].state
         expected_state = self.state_traj.at_interp(sim_obs.time)
 
-        #
-        # TODO: Implement scheme to replan
-        #
-
-        # ZeroOrderHold
-        # cmds = self.cmds_plan.at_or_previous(sim_obs.time)
-        # FirstOrderHold
-        cmds = self.cmds_plan.at_interp(sim_obs.time)
-
-        return cmds
+        # TODO: Implement Tracking

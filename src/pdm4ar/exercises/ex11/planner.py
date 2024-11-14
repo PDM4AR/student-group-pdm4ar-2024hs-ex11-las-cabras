@@ -102,7 +102,10 @@ class SpaceshipPlanner:
         # Problem Parameters
         self.problem_parameters = self._get_problem_parameters()
 
-        self.X_bar, self.U_bar, self.p_bar = self.initial_guess()
+        # Initialize with zeros (will be updated in compute_trajectory)
+        self.X_bar = np.zeros((self.spaceship.n_x, self.params.K))
+        self.U_bar = np.zeros((self.spaceship.n_u, self.params.K))
+        self.p_bar = np.zeros(self.spaceship.n_p)
 
         # Constraints
         constraints = self._get_constraints()
@@ -119,34 +122,17 @@ class SpaceshipPlanner:
         """
         Compute a trajectory from init_state to goal_state.
         """
-        self.init_state = init_state
-        self.goal_state = goal_state
-
-        #
-        # TODO: Implement SCvx algorithm or comparable
-        #
-
-        self._convexification()
-        try:
-            error = self.problem.solve(verbose=self.params.verbose_solver, solver=self.params.solver)
-        except cvx.SolverError:
-            print(f"SolverError: {self.params.solver} failed to solve the problem.")
-
-        # Example data: sequence from array
-        mycmds, mystates = self._extract_seq_from_array()
-
-        return mycmds, mystates
+        # TODO: Implement this method
+        pass
 
     def initial_guess(self) -> tuple[NDArray, NDArray, NDArray]:
         """
         Define initial guess for SCvx.
         """
         K = self.params.K
-
         X = np.zeros((self.spaceship.n_x, K))
         U = np.zeros((self.spaceship.n_u, K))
-        p = np.zeros((self.spaceship.n_p))
-
+        p = np.array([10.0])  # Initial time guess
         return X, U, p
 
     def _set_goal(self):
@@ -180,21 +166,89 @@ class SpaceshipPlanner:
         return problem_parameters
 
     def _get_constraints(self) -> list[cvx.Constraint]:
-        """
-        Define constraints for SCvx.
-        """
+        """Define constraints for SCvx."""
+        X = self.variables["X"]  # state variables [n_x, K]
+        U = self.variables["U"]  # control inputs [n_u, K]
+        p = self.variables["p"]  # time parameter
+        K = self.params.K
+
         constraints = [
-            self.variables["X"][:, 0] == self.problem_parameters["init_state"],
-            # ...
+            # Initial state
+            X[:, 0] == self.problem_parameters["init_state"],
+            # Input constraints
+            U[0, :] >= self.sp.thrust_limits[0],  # min thrust
+            U[0, :] <= self.sp.thrust_limits[1],  # max thrust
+            U[1, :] >= self.sp.delta_limits[0],  # min steering
+            U[1, :] <= self.sp.delta_limits[1],  # max steering
+            U[:, 0] == 0,  # zero initial input
+            U[:, -1] == 0,  # zero final input
+            # State constraints
+            X[7, :] >= self.sp.m_v,  # mass above vehicle mass
+            # Time constraint
+            p >= 0,
+            p <= 60,
+            # Steering rate
+            cvx.abs(U[1, 1:] - U[1, :-1]) <= self.sp.ddelta_limits[1] * p / (K - 1),
         ]
+
+        # Obstacles - Planets
+        for planet in self.planets.values():
+            radius = planet.radius + self.sg.l
+            center = np.array(planet.center)
+            for k in range(K):
+                # Instead of: cvx.norm(X[:2, k] - center) >= radius
+                # We use: ||x - c||^2 >= r^2
+                diff = X[:2, k] - center
+                constraints.append(cvx.sum_squares(diff) >= radius * radius)
+
+        # Obstacles - Satellites
+        for sat in self.satellites.values():
+            radius = sat.radius + self.sg.l
+            for k in range(K):
+                t = k * p / (K - 1)
+
+                # Linear approximation of satellite position
+                angle = sat.tau + sat.omega * t
+                ca = np.cos(sat.tau)  # Fixed angle component
+                sa = np.sin(sat.tau)
+
+                x_sat = sat.orbit_r * (ca - t * sat.omega * sa)
+                y_sat = sat.orbit_r * (sa + t * sat.omega * ca)
+                sat_pos = np.array([x_sat, y_sat])
+
+                # Squared distance constraint
+                diff = X[:2, k] - sat_pos
+                constraints.append(cvx.sum_squares(diff) >= radius * radius)
+
         return constraints
 
     def _get_objective(self) -> Union[cvx.Minimize, cvx.Maximize]:
         """
         Define objective for SCvx.
         """
-        # Example objective
-        objective = self.params.weight_p @ self.variables["p"]
+        X = self.variables["X"]
+        U = self.variables["U"]
+        p = self.variables["p"]
+
+        # Minimize time
+        time_obj = self.params.weight_p @ p
+
+        # Minimize fuel consumption (mass loss)
+        init_mass = X[7, 0]
+        final_mass = X[7, -1]
+        fuel_obj = init_mass - final_mass
+
+        # Minimize control effort
+        control_obj = cvx.sum_squares(U[0, :])  # thrust
+        steering_obj = cvx.sum_squares(U[1, :])  # steering
+
+        # Weights
+        w_time = 1.0
+        w_fuel = 0.1
+        w_control = 0.01
+        w_steering = 0.01
+
+        objective = w_time * time_obj + w_fuel * fuel_obj + w_control * control_obj + w_steering * steering_obj
 
         return cvx.Minimize(objective)
 
@@ -210,8 +264,7 @@ class SpaceshipPlanner:
             self.X_bar, self.U_bar, self.p_bar
         )
 
-        self.problem_parameters["init_state"].value = self.X_bar[:, 0]
-        # ...
+        # TODO: Populate Problem Parameters
 
     def _check_convergence(self) -> bool:
         """
