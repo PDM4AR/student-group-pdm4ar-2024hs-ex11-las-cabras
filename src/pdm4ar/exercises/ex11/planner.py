@@ -89,6 +89,8 @@ class SpaceshipPlanner:
         # Solver Parameters
         self.params = SolverParameters()
 
+        self.s_prime = {name: cvx.Variable((self.params.K, 1), nonneg=True) for name in planets.keys()}
+
         # Spaceship Dynamics
         self.spaceship = SpaceshipDyn(self.sg, self.sp)
 
@@ -159,7 +161,15 @@ class SpaceshipPlanner:
         problem_parameters = {
             "init_state": cvx.Parameter(self.spaceship.n_x),
             "goal_state": cvx.Parameter(self.spaceship.n_x),
-            "A_bar": cvx.Parameter((self.spaceship.n_x * self.spaceship.n_x, self.params.K - 1)),
+            "X_last": cvx.Parameter((self.spaceship.n_x * self.spaceship.n_x, self.params.K)),
+            "U_last": cvx.Parameter((self.spaceship.n_u * self.spaceship.n_x, self.params.K)),
+            "A_bar": cvx.Parameter((self.spaceship.n_x, self.spaceship.n_x, self.params.K - 1)),
+            "B_bar_plus": cvx.Parameter((self.spaceship.n_x, self.spaceship.n_u, self.params.K - 1)),
+            "B_bar_minus": cvx.Parameter((self.spaceship.n_x, self.spaceship.n_u, self.params.K - 1)),
+            "C_bar": cvx.Parameter((self.spaceship.n_x, self.spaceship.n_u, self.params.K - 1)),
+            "F_bar": cvx.Parameter((self.spaceship.n_x, 1, self.params.K - 1)),
+            "p_last": cvx.Parameter(self.spaceship.n_p),
+            "r_bar": cvx.Parameter((self.spaceship.n_x, 1, self.params.K - 1)),
         }
 
         return problem_parameters
@@ -175,20 +185,18 @@ class SpaceshipPlanner:
         constraints = [
             # Initial state
             X[:, 0] == self.problem_parameters["init_state"],
+            # Final state
+            X[0:6, -1] == self.problem_parameters["goal_state"],
             # Input constraints
             U[:, 0] == 0,  # zero initial input
             U[:, -1] == 0,  # zero final input
-            # State constraints
-            X[7, :] >= self.sp.m_v,  # mass above vehicle mass
-            X[6, :] >= self.sp.delta_limits[0],
-            X[6, :] <= self.sp.delta_limits[1],
         ]
 
         # State constrains
         constraints += [
             X[7, :] >= self.sp.m_v,  # mass above vehicle mass
-            X[6, :] >= self.sp.delta_limits[0],
-            X[6, :] <= self.sp.delta_limits[1],
+            X[6, :] >= self.sp.delta_limits[0],  # min steering angle
+            X[6, :] <= self.sp.delta_limits[1],  # max steering angle
         ]
 
         # Input constraints
@@ -199,15 +207,17 @@ class SpaceshipPlanner:
             U[1, :] <= self.sp.ddelta_limits[1],  # max steering
         ]
 
-        # Obstacles - Planets
-        for planet in self.planets.values():
-            radius = planet.radius + self.sg.l
-            center = np.array(planet.center)
+        # Time constraints
+        constraints += [
+            p >= 0.0,  # time positive
+        ]
+
+        for planet_name, planet in self.planets.items():
+            p_c = planet.center
+            min_dist = planet.radius + self.sg.l
+
             for k in range(K):
-                # Instead of: cvx.norm(X[:2, k] - center) >= radius
-                # We use: ||x - c||^2 >= r^2
-                diff = X[:2, k] - center
-                constraints.append(cvx.sum_squares(diff) >= radius * radius)
+                constraints += [cvx.norm(X[0:2, k] - p_c) >= min_dist]
 
         # # Obstacles - Satellites
         # for sat in self.satellites.values():
@@ -272,7 +282,15 @@ class SpaceshipPlanner:
             self.X_bar, self.U_bar, self.p_bar
         )
 
-        # TODO: Populate Problem Parameters
+        self.problem_parameters["A_bar"].value = A_bar
+        self.problem_parameters["B_plus_bar"].value = B_plus_bar  # For FOH
+        self.problem_parameters["B_minus_bar"].value = B_minus_bar  # For FOH
+        self.problem_parameters["F_bar"].value = F_bar
+        self.problem_parameters["r_bar"].value = r_bar
+        self.problem_parameters["X_last"].value = self.X_bar
+        self.problem_parameters["U_last"].value = self.U_bar
+        self.problem_parameters["init_state"].value = self.X_bar[:, 0]
+        self.problem_parameters["goal_state"].value = self.goal.as_ndarray()
 
     def _check_convergence(self) -> bool:
         """
